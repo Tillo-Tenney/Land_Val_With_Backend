@@ -1,6 +1,7 @@
 # Welcome to your Lovable project
 
 git remote rm origin
+
 git remote add origin <new_remote_url>
 
 ## Project info
