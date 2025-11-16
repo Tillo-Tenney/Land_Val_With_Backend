@@ -1,5 +1,8 @@
 # Welcome to your Lovable project
 
+git remote rm origin
+git remote add origin <new_remote_url>
+
 ## Project info
 
 **URL**: https://lovable.dev/projects/60592859-b766-48a1-b913-3b7432e5fbcf
