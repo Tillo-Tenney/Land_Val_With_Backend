@@ -1,3 +1,6 @@
+// =============================================
+// UPDATED WORKFLOW WIZARD (Mysql Integrated)
+// =============================================
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -11,9 +14,15 @@ import { Progress } from "@/components/ui/progress";
 import { CheckCircle2, Circle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+// ⬇️ NEW — API import
+import { createWorkflow } from "@/api/workflowsApi";
+
 interface WorkflowWizardProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+
+  /** NEW — so dashboard can update immediately */
+  onWorkflowCreated?: (workflow: any) => void;
 }
 
 interface Phase {
@@ -23,8 +32,12 @@ interface Phase {
   requiredDocs: string[];
 }
 
-export function WorkflowWizard({ open, onOpenChange }: WorkflowWizardProps) {
+export function WorkflowWizard({ open, onOpenChange, onWorkflowCreated }: WorkflowWizardProps) {
   const [step, setStep] = useState(1);
+  const { toast } = useToast();
+
+  const [submitting, setSubmitting] = useState(false);
+
   const [workflowData, setWorkflowData] = useState({
     name: "",
     template: "",
@@ -34,7 +47,6 @@ export function WorkflowWizard({ open, onOpenChange }: WorkflowWizardProps) {
     phases: [] as Phase[],
     dueDate: "",
   });
-  const { toast } = useToast();
 
   const steps = [
     { number: 1, title: "Basic Info", description: "Workflow details" },
@@ -43,31 +55,68 @@ export function WorkflowWizard({ open, onOpenChange }: WorkflowWizardProps) {
     { number: 4, title: "Review", description: "Review & submit" },
   ];
 
-  const handleNext = () => {
-    if (step < 4) setStep(step + 1);
-  };
+  const handleNext = () => step < 4 && setStep(step + 1);
+  const handleBack = () => step > 1 && setStep(step - 1);
 
-  const handleBack = () => {
-    if (step > 1) setStep(step - 1);
-  };
+  // =============================================
+  // 🚀 FINAL CREATE WORKFLOW → MYSQL BACKEND
+  // =============================================
+  const handleSubmit = async () => {
+    try {
+      setSubmitting(true);
 
-  const handleSubmit = () => {
-    toast({
-      title: "Workflow Created!",
-      description: `${workflowData.name} has been successfully created.`,
-    });
-    onOpenChange(false);
-    // Reset form
-    setStep(1);
-    setWorkflowData({
-      name: "",
-      template: "",
-      location: "",
-      description: "",
-      priority: "medium",
-      phases: [],
-      dueDate: "",
-    });
+      // Generate Workflow ID (similar to your existing DB format)
+      const newId = `WF-${Date.now()}`;
+
+      const payload = {
+        id: newId,
+        name: workflowData.name,
+        template: workflowData.template,
+        status: "in-progress",
+        progress: 0,
+        currentPhase: workflowData.phases[0]?.name || "Not Started",
+        assignee: workflowData.phases[0]?.assignee || "",
+        startDate: new Date().toISOString().slice(0, 10),
+        dueDate: workflowData.dueDate || null,
+        priority: workflowData.priority,
+        location: workflowData.location,
+        description: workflowData.description,
+        phases: workflowData.phases,
+      };
+
+      // ⬇️ Call backend API
+      const saved = await createWorkflow(payload);
+
+      // ⬇️ Optimistic UI update to dashboard
+      onWorkflowCreated?.(saved);
+
+      toast({
+        title: "Workflow Created!",
+        description: `"${workflowData.name}" has been successfully added.`,
+      });
+
+      // Reset & close modal
+      setWorkflowData({
+        name: "",
+        template: "",
+        location: "",
+        description: "",
+        priority: "medium",
+        phases: [],
+        dueDate: "",
+      });
+      setStep(1);
+      onOpenChange(false);
+
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: "Could not save workflow to server.",
+        variant: "destructive",
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const addPhase = () => {
@@ -87,14 +136,14 @@ export function WorkflowWizard({ open, onOpenChange }: WorkflowWizardProps) {
           <DialogTitle className="text-2xl">Create New Workflow</DialogTitle>
         </DialogHeader>
 
-        {/* Progress Steps */}
+        {/* Steps Progress Bar */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-4">
             {steps.map((s) => (
               <div key={s.number} className="flex items-center flex-1">
                 <div className="flex flex-col items-center flex-1">
                   <div
-                    className={`w-10 h-10 rounded-full flex items-center justify-center border-2 transition-colors ${
+                    className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${
                       s.number < step
                         ? "bg-success border-success text-success-foreground"
                         : s.number === step
@@ -109,14 +158,9 @@ export function WorkflowWizard({ open, onOpenChange }: WorkflowWizardProps) {
                     )}
                   </div>
                   <p className="text-xs font-medium mt-2 text-center">{s.title}</p>
-                  <p className="text-xs text-muted-foreground">{s.description}</p>
                 </div>
                 {s.number < steps.length && (
-                  <div
-                    className={`h-0.5 flex-1 mx-2 ${
-                      s.number < step ? "bg-success" : "bg-border"
-                    }`}
-                  />
+                  <div className={`h-0.5 flex-1 mx-2 ${s.number < step ? "bg-success" : "bg-border"}`} />
                 )}
               </div>
             ))}
@@ -124,54 +168,52 @@ export function WorkflowWizard({ open, onOpenChange }: WorkflowWizardProps) {
           <Progress value={(step / 4) * 100} className="h-2" />
         </div>
 
-        {/* Step Content */}
+        {/* -------------------- STEP CONTENT ---------------------- */}
         <div className="space-y-4">
+          {/* STEP 1 — DETAILS */}
           {step === 1 && (
             <div className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="name">Workflow Name *</Label>
+              <div>
+                <Label>Workflow Name *</Label>
                 <Input
-                  id="name"
                   placeholder="e.g., Plot Survey - Adyar District"
                   value={workflowData.name}
                   onChange={(e) => setWorkflowData({ ...workflowData, name: e.target.value })}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="template">Template *</Label>
+
+              <div>
+                <Label>Template *</Label>
                 <Select
                   value={workflowData.template}
                   onValueChange={(value) => setWorkflowData({ ...workflowData, template: value })}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select a template" />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Select a template" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="plot-survey">Standard Plot Survey</SelectItem>
-                    <SelectItem value="house-assessment">House Assessment</SelectItem>
-                    <SelectItem value="land-valuation">Land Valuation</SelectItem>
-                    <SelectItem value="commercial">Commercial Assessment</SelectItem>
+                    <SelectItem value="Standard Plot Survey">Standard Plot Survey</SelectItem>
+                    <SelectItem value="House Assessment">House Assessment</SelectItem>
+                    <SelectItem value="Land Valuation">Land Valuation</SelectItem>
+                    <SelectItem value="Commercial Assessment">Commercial Assessment</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="location">Location</Label>
+
+              <div>
+                <Label>Location</Label>
                 <Input
-                  id="location"
                   placeholder="e.g., Adyar, Chennai"
                   value={workflowData.location}
                   onChange={(e) => setWorkflowData({ ...workflowData, location: e.target.value })}
                 />
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="priority">Priority</Label>
+
+              <div>
+                <Label>Priority</Label>
                 <Select
                   value={workflowData.priority}
                   onValueChange={(value) => setWorkflowData({ ...workflowData, priority: value })}
                 >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="low">Low</SelectItem>
                     <SelectItem value="medium">Medium</SelectItem>
@@ -179,64 +221,67 @@ export function WorkflowWizard({ open, onOpenChange }: WorkflowWizardProps) {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="description">Description</Label>
+
+              <div>
+                <Label>Description</Label>
                 <Textarea
-                  id="description"
-                  placeholder="Brief description of the workflow..."
+                  placeholder="Brief workflow description..."
                   value={workflowData.description}
                   onChange={(e) => setWorkflowData({ ...workflowData, description: e.target.value })}
                   rows={3}
                 />
               </div>
+
+              <div>
+                <Label>Due Date</Label>
+                <Input
+                  type="date"
+                  value={workflowData.dueDate}
+                  onChange={(e) => setWorkflowData({ ...workflowData, dueDate: e.target.value })}
+                />
+              </div>
             </div>
           )}
 
+          {/* STEP 2 — PHASES */}
           {step === 2 && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <p className="text-sm text-muted-foreground">
-                  Configure phases for your workflow
-                </p>
-                <Button onClick={addPhase} variant="outline" size="sm">
-                  Add Phase
-                </Button>
+              <div className="flex justify-between">
+                <p className="text-sm text-muted-foreground">Define workflow phases</p>
+                <Button variant="outline" size="sm" onClick={addPhase}>Add Phase</Button>
               </div>
+
               {workflowData.phases.length === 0 ? (
-                <Card>
-                  <CardContent className="py-8 text-center text-muted-foreground">
-                    No phases added yet. Click "Add Phase" to create one.
-                  </CardContent>
-                </Card>
+                <Card><CardContent className="py-8 text-center text-muted-foreground">No phases yet.</CardContent></Card>
               ) : (
-                workflowData.phases.map((phase, index) => (
-                  <Card key={index}>
+                workflowData.phases.map((phase, idx) => (
+                  <Card key={idx}>
                     <CardContent className="pt-6 space-y-3">
-                      <div className="flex items-center justify-between">
-                        <Badge variant="outline">Phase {index + 1}</Badge>
-                      </div>
+                      <Badge variant="outline">Phase {idx + 1}</Badge>
+
                       <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-2">
+                        <div>
                           <Label>Phase Name</Label>
                           <Input
-                            placeholder="e.g., Site Inspection"
                             value={phase.name}
+                            placeholder="e.g., Site Inspection"
                             onChange={(e) => {
-                              const newPhases = [...workflowData.phases];
-                              newPhases[index].name = e.target.value;
-                              setWorkflowData({ ...workflowData, phases: newPhases });
+                              const arr = [...workflowData.phases];
+                              arr[idx].name = e.target.value;
+                              setWorkflowData({ ...workflowData, phases: arr });
                             }}
                           />
                         </div>
-                        <div className="space-y-2">
+
+                        <div>
                           <Label>Duration (days)</Label>
                           <Input
-                            placeholder="e.g., 3"
                             value={phase.duration}
+                            placeholder="3"
                             onChange={(e) => {
-                              const newPhases = [...workflowData.phases];
-                              newPhases[index].duration = e.target.value;
-                              setWorkflowData({ ...workflowData, phases: newPhases });
+                              const arr = [...workflowData.phases];
+                              arr[idx].duration = e.target.value;
+                              setWorkflowData({ ...workflowData, phases: arr });
                             }}
                           />
                         </div>
@@ -248,93 +293,68 @@ export function WorkflowWizard({ open, onOpenChange }: WorkflowWizardProps) {
             </div>
           )}
 
+          {/* STEP 3 — ASSIGNMENTS */}
           {step === 3 && (
             <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">
-                Assign participants to each phase
-              </p>
-              {workflowData.phases.map((phase, index) => (
-                <Card key={index}>
+              {workflowData.phases.map((phase, idx) => (
+                <Card key={idx}>
                   <CardContent className="pt-6 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-medium">{phase.name || `Phase ${index + 1}`}</h4>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Assignee</Label>
-                      <Select
-                        value={phase.assignee}
-                        onValueChange={(value) => {
-                          const newPhases = [...workflowData.phases];
-                          newPhases[index].assignee = value;
-                          setWorkflowData({ ...workflowData, phases: newPhases });
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select assignee" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="engineer">Engineer</SelectItem>
-                          <SelectItem value="assistant-a">Assistant A</SelectItem>
-                          <SelectItem value="assistant-b">Assistant B</SelectItem>
-                          <SelectItem value="client">Client</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    <h4 className="font-medium">{phase.name || `Phase ${idx + 1}`}</h4>
+
+                    <Label>Assignee</Label>
+                    <Select
+                      value={phase.assignee}
+                      onValueChange={(v) => {
+                        const arr = [...workflowData.phases];
+                        arr[idx].assignee = v;
+                        setWorkflowData({ ...workflowData, phases: arr });
+                      }}
+                    >
+                      <SelectTrigger><SelectValue placeholder="Select assignee" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Engineer">Engineer</SelectItem>
+                        <SelectItem value="Assistant A">Assistant A</SelectItem>
+                        <SelectItem value="Assistant B">Assistant B</SelectItem>
+                        <SelectItem value="Client">Client</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </CardContent>
                 </Card>
               ))}
             </div>
           )}
 
+          {/* STEP 4 — REVIEW */}
           {step === 4 && (
             <div className="space-y-4">
               <Card>
-                <CardContent className="pt-6 space-y-4">
+                <CardContent className="pt-6 space-y-3">
+                  <div><h4 className="font-medium">Workflow Name</h4><p>{workflowData.name}</p></div>
+                  <div><h4 className="font-medium">Template</h4><p>{workflowData.template}</p></div>
+                  <div><h4 className="font-medium">Location</h4><p>{workflowData.location}</p></div>
+
                   <div>
-                    <h4 className="font-medium mb-1">Workflow Name</h4>
-                    <p className="text-sm text-muted-foreground">{workflowData.name}</p>
+                    <h4 className="font-medium">Priority</h4>
+                    <Badge>{workflowData.priority}</Badge>
                   </div>
-                  <div>
-                    <h4 className="font-medium mb-1">Template</h4>
-                    <p className="text-sm text-muted-foreground">{workflowData.template}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-medium mb-1">Location</h4>
-                    <p className="text-sm text-muted-foreground">{workflowData.location || "Not specified"}</p>
-                  </div>
-                  <div>
-                    <h4 className="font-medium mb-1">Priority</h4>
-                    <Badge
-                      variant={
-                        workflowData.priority === "high"
-                          ? "destructive"
-                          : workflowData.priority === "medium"
-                          ? "secondary"
-                          : "outline"
-                      }
-                    >
-                      {workflowData.priority}
-                    </Badge>
-                  </div>
-                  <div>
-                    <h4 className="font-medium mb-1">Phases</h4>
-                    <p className="text-sm text-muted-foreground">{workflowData.phases.length} phases configured</p>
-                  </div>
+
+                  <div><h4 className="font-medium">Phases</h4><p>{workflowData.phases.length} total</p></div>
                 </CardContent>
               </Card>
             </div>
           )}
         </div>
 
-        {/* Navigation */}
+        {/* BOTTOM NAVIGATION */}
         <div className="flex justify-between mt-6 pt-6 border-t">
-          <Button variant="outline" onClick={handleBack} disabled={step === 1}>
-            Back
-          </Button>
+          <Button variant="outline" onClick={handleBack} disabled={step === 1}>Back</Button>
+
           {step < 4 ? (
             <Button onClick={handleNext}>Next</Button>
           ) : (
-            <Button onClick={handleSubmit}>Create Workflow</Button>
+            <Button onClick={handleSubmit} disabled={submitting}>
+              {submitting ? "Saving..." : "Create Workflow"}
+            </Button>
           )}
         </div>
       </DialogContent>
